@@ -23,3 +23,36 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
  * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
+#ifndef PCRESP_H
+#define PCRESP_H
+
+#include "stdio.h"
+#include "string.h"
+
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include "pcre2.h"
+
+typedef struct ext_string {
+	const char *chars;
+	size_t length;
+} ext_string;
+
+extern int print_text;
+extern int match_max;
+extern int ext_string_count;
+extern ext_string* ext_string_list;
+extern pcre2_code *re_code;
+extern pcre2_match_context *match_context;
+extern pcre2_match_data *match_data;
+extern uint32_t ovector_size;
+extern char *default_script;
+extern size_t default_script_size;
+
+void match_file(char*);
+void match_stdin(void);
+void match(char*, size_t);
+int check_script(const char *, size_t);
+int run_script(const char *, size_t, const char *, PCRE2_SIZE *, char *);
+
+#endif /* PCRESP_H */

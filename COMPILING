@@ -1,0 +1,25 @@
+A. If pcre2 is installed:
+
+  CFLAGS=-O2 make
+
+B. If pcre2 is not installed:
+
+1. Download and extract the latest pcre2 form:
+
+  ftp://ftp.csx.cam.ac.uk/pub/software/programming/pcre/
+
+2. Configure and make pcre
+
+  CFLAGS=-O2 ./configure --enable-unicode --enable-jit
+  make
+
+  Note: if there are issues with the JIT compiler the --enable-jit can be removed
+        a static pcre2 is created if --enable-shared=no is passed as well
+
+3. Compile pcresp
+
+  CPPFLAGS=-I/path_to_pcre2/src \
+  LDFLAGS=-L/path_to_pcre2/.libs \
+  CFLAGS=-O2 make
+
+  Note: I recommend absolute path to pcre2
