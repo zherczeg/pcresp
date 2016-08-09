@@ -47,7 +47,7 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 	src = script;
 	src_end = script + script_size;
 
-	if (src < src_end && *src == '!') {
+	if (*src == '!') {
 		src++;
 	}
 
@@ -122,10 +122,8 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 				/* To negate the effect of src++ below. */
 				src--;
 			}
-			else if (*src == '{' || *src == '[') {
-				/* Must be a decimal number in parenthesis, e.g: (5) or (38) */
-				char term_char = (*src == '{') ? '}' : ']';
-
+			else if (*src == '{') {
+				/* Must be a decimal number in parenthesis, e.g: {5} or {38} */
 				src++;
 				capture_id = 0;
 
@@ -143,10 +141,27 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 					}
 
 					src++;
-					if (src < src_end && *src == term_char) {
+					if (src < src_end && *src == '}') {
 						break;
 					}
 				}
+			}
+			else if (*src == '[') {
+				src++;
+
+				if (src >= src_end || *src == ']') {
+					*msg = "string name cannot be empty";
+					return src;
+				}
+
+				do {
+					src++;
+					if (src >= src_end) {
+						*msg = "string name is not terminated by ']'";
+						return src;
+					}
+				} while (*src != ']');
+				src++;
 			}
 			else if (*src != '%' && *src != '<' && *src != '>' && *src != 'M') {
 				*msg = "invalid % sign sequence";
@@ -207,6 +222,20 @@ static size_t get_capture_size(PCRE2_SIZE capture_id, PCRE2_SIZE *ovector, const
 	return ovector[capture_id + 1] - ovector[capture_id];
 }
 
+static ext_string * get_ext_string(const char *name, size_t length)
+{
+	ext_string *current = ext_string_list;
+	ext_string *end = ext_string_list + ext_string_count;
+
+	while (current < end) {
+		if (current->name_length == length && memcmp(current->name, name, length) == 0) {
+			return current;
+		}
+		current++;
+	}
+	return NULL;
+}
+
 int run_script(const char *script, size_t script_size, const char *buffer, PCRE2_SIZE *ovector, char *mark)
 {
 	const char *src, *src_end, *src_start;
@@ -243,6 +272,10 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 	str_list_len = 1;
 	in_group = 0;
 	src_start = src;
+
+	if (shell != NULL) {
+		args_len += 3;
+	}
 
 	if (*src == '<') {
 		in_group = 1;
@@ -298,16 +331,18 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			}
 			else if (*src == '[')
 			{
-				src++;
+				const char *name = src + 1;
+				ext_string *string;
 
 				do
 				{
-					capture_id = capture_id * 10 + (*src - '0');
 					src++;
 				} while (*src != ']');
 
-				if (capture_id < ext_string_count) {
-					str_list_len += ext_string_list[capture_id].length;
+				string = get_ext_string(name, src - name);
+
+				if (string != NULL) {
+					str_list_len += string->chars_length;
 				}
 
 				src++;
@@ -340,7 +375,15 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 	args_dst = args;
 	str_list_dst = (char*)(args + args_len);
 
-	*args_dst++ = str_list_dst;
+	if (shell != NULL) {
+		*args_dst++ = shell;
+		*args_dst++ = "-c";
+		*args_dst++ = str_list_dst;
+		*args_dst++ = shell;
+	}
+	else {
+		*args_dst++ = str_list_dst;
+	}
 
 	src = src_start;
 	in_group = 0;
@@ -402,17 +445,19 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			}
 			else if (*src == '[')
 			{
-				src++;
+				const char *name = src + 1;
+				ext_string *string;
 
 				do
 				{
-					capture_id = capture_id * 10 + (*src - '0');
 					src++;
 				} while (*src != ']');
 
-				if (capture_id < ext_string_count) {
-					memcpy_size = ext_string_list[capture_id].length;
-					memcpy(str_list_dst, ext_string_list[capture_id].chars, memcpy_size);
+				string = get_ext_string(name, src - name);
+
+				if (string != NULL) {
+					memcpy_size = string->chars_length;
+					memcpy(str_list_dst, string->chars, memcpy_size);
 					str_list_dst += memcpy_size;
 				}
 

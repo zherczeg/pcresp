@@ -36,6 +36,7 @@ pcre2_match_data *match_data;
 uint32_t ovector_size;
 char *default_script;
 size_t default_script_size;
+char *shell;
 
 static void help(const char *name)
 {
@@ -55,8 +56,8 @@ static void help(const char *name)
 		"          Executing this script after each successul match\n"
 		"  -p, --print\n"
 		"          Print text between matched strings\n"
-		"  -d, --def-string\n"
-		"          Define a constant string (indexed from 0, see %%[idx])\n"
+		"  -d, --def-string name string\n"
+		"          Define a constant string (see %%[name])\n"
 		"  -i\n"
 		"          Enable caseless matching\n"
 		"  -m\n"
@@ -67,6 +68,9 @@ static void help(const char *name)
 		"          Enable UTF-8\n"
 		"  --match-max n\n"
 		"          Stop after n successful match (0 - unlimited)\n"
+		"  --shell shell_name\n"
+		"          Specify default shell for scripts:\n"
+		"          shell_name -c [first arg] shell_name [followup args]\n"
 		"  --newline-lf\n"
 		"          Set newline type to LF (linefeed) only (\\n)\n"
 		"  --newline-cr\n"
@@ -88,27 +92,40 @@ static void help(const char *name)
 		"\nScript format:\n"
 		"\n  path_to_executable argument1 argument2 ...\n"
 		"\n  arguments can be enclosed in <> bracket\n"
-		"\n  if script starts with ! the output is discarded\n"
+		"  if script starts with ! the output is discarded\n"
 		"\nSpecial character sequences for scripts:\n"
-		"  %%idx    - string value of capture block idx (0-65535)\n"
-		"  %%{idx}  - string value of capture block idx (0-65535)\n"
-		"  %%[idx]  - insert string (0-65535)\n"
-		"  %%M      - current MARK value\n"
-		"  %%%%      - %% (percent) sign\n"
-		"  %%<      - less-than sign character\n"
-		"  %%>      - greater-than sign character\n",
+		"  %%idx     - string value of capture block idx (0-65535)\n"
+		"  %%{idx}   - string value of capture block idx (0-65535)\n"
+		"  %%[name]  - insert constant string by name\n"
+		"  %%M       - current MARK value\n"
+		"  %%%%       - %% (percent) sign\n"
+		"  %%<       - less-than sign character\n"
+		"  %%>       - greater-than sign character\n",
 		name);
 }
 
-static int add_ext_string(const char *chars)
+static int add_ext_string(const char *name, const char *chars)
 {
 	static int ext_string_max = 0;
-
 	ext_string *new_ext_string_list;
+	const char *cptr = name;
 
 	if (ext_string_count == 65535) {
 		fprintf(stderr, "Maximum number of scripts reached\n");
 		return 0;
+	}
+
+	if (cptr == NULL || *cptr == '\0') {
+		fprintf(stderr, "String name cannot be empty\n");
+		return 0;
+	}
+
+	while (*cptr != '\0') {
+		if (*cptr == ']') {
+			fprintf(stderr, "The ']' character is not allowed in string name: %s\n", cptr);
+			return 0;
+		}
+		cptr++;
 	}
 
 	if (ext_string_count >= ext_string_max) {
@@ -128,8 +145,10 @@ static int add_ext_string(const char *chars)
 		ext_string_max += growth;
 	}
 
+	ext_string_list[ext_string_count].name = name;
+	ext_string_list[ext_string_count].name_length = strlen(name);
 	ext_string_list[ext_string_count].chars = chars;
-	ext_string_list[ext_string_count].length = strlen(chars);
+	ext_string_list[ext_string_count].chars_length = strlen(chars);
 	ext_string_count++;
 	return 1;
 }
@@ -220,13 +239,14 @@ static int pcresp_main(int argc, char* argv[])
 				continue;
 			}
 			else if (strcmp(arg, "def-string") == 0) {
-				if (arg_index >= argc) {
-					fprintf(stderr, "Script required after --def-string\n");
+				if (arg_index + 1>= argc) {
+					fprintf(stderr, "Name and string required after --def-string\n");
 					return 1;
 				}
-				if (!add_ext_string(argv[arg_index++])) {
+				if (!add_ext_string(argv[arg_index], argv[arg_index + 1])) {
 					return 1;
 				}
+				arg_index += 2;
 				continue;
 			}
 			else if (strcmp(arg, "match-max") == 0) {
@@ -237,6 +257,17 @@ static int pcresp_main(int argc, char* argv[])
 				match_max = read_int(argv[arg_index++], 100000000);
 				if (match_max == -1) {
 					return 1;
+				}
+				continue;
+			}
+			else if (strcmp(arg, "shell") == 0) {
+				if (arg_index >= argc) {
+					fprintf(stderr, "String required after --shell\n");
+					return 1;
+				}
+				shell = argv[arg_index++];
+				if (*shell == '\0') {
+					shell = NULL;
 				}
 				continue;
 			}
@@ -287,13 +318,14 @@ static int pcresp_main(int argc, char* argv[])
 				print_text = 1;
 				continue;
 			case 'd':
-				if (arg_index >= argc) {
-					fprintf(stderr, "Script required after -d\n");
+				if (arg_index + 1>= argc) {
+					fprintf(stderr, "Name and string required after -d\n");
 					return 1;
 				}
-				if (!add_ext_string(argv[arg_index++])) {
+				if (!add_ext_string(argv[arg_index], argv[arg_index + 1])) {
 					return 1;
 				}
+				arg_index += 2;
 				continue;
 			case 'i':
 				options |= PCRE2_CASELESS;

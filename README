@@ -28,12 +28,15 @@ Some examples:
     INC=`expr $2 + 1`
     echo $1 : $INC
   '
-  echo A7 BB29 | pcresp -d "$SRC" -s "/bin/bash -c %[0] my_command %1 %2" '([A-Z]+)(\d+)'
+  echo A7 BB29 | pcresp -d prog "$SRC" -s "/bin/bash -c %[prog] script_name %1 %2" '([A-Z]+)(\d+)'
     This example shows an easy way to embed strings (usually source codes).
     The source referenced %[0] is not processed by pcresp.
     Result:
       A : 8
       BB : 30
+
+  echo A7 BB29 | pcresp --def-string prog "$SRC" --shell "/bin/bash" -s "%[prog] %1 %2" '([A-Z]+)(\d+)'
+    Same as above
 
 Usage pcresp [options] pcre_pattern [file list]
 
@@ -43,8 +46,8 @@ Usage pcresp [options] pcre_pattern [file list]
           Executing this script after each successul match
   -p, --print
           Print text between matched strings
-  -d, --def-string
-          Define a constant string (indexed from 0, see %[idx])
+  -d, --def-string name string
+          Define a constant string (see %[name])
   -i
           Enable caseless matching
   -m
@@ -55,6 +58,9 @@ Usage pcresp [options] pcre_pattern [file list]
           Enable UTF-8
   --match-max n
           Stop after n successful match (0 - unlimited)
+  --shell shell_name
+          Specify default shell for scripts:
+          shell_name -c [first arg] shell_name [followup args]
   --newline-lf
           Set newline type to LF (linefeed) only (\n)
   --newline-cr
@@ -82,14 +88,13 @@ Script format:
   path_to_executable argument1 argument2 ...
 
   arguments can be enclosed in <> bracket
-
   if script starts with ! the output is discarded
 
 Special character sequences for scripts:
-  %idx    - string value of capture block idx (0-65535)
-  %{idx}  - string value of capture block idx (0-65535)
-  %[idx]  - insert string (0-65535)
-  %M      - current MARK value
-  %%      - % (percent) sign
-  %<      - less-than sign character
-  %>      - greater-than sign character
+  %idx     - string value of capture block idx (0-65535)
+  %{idx}   - string value of capture block idx (0-65535)
+  %[name]  - insert constant string by name
+  %M       - current MARK value
+  %%       - % (percent) sign
+  %<       - less-than sign character
+  %>       - greater-than sign character

@@ -34,8 +34,10 @@
 #include "pcre2.h"
 
 typedef struct ext_string {
+	const char *name;
+	size_t name_length;
 	const char *chars;
-	size_t length;
+	size_t chars_length;
 } ext_string;
 
 extern int print_text;
@@ -48,6 +50,7 @@ extern pcre2_match_data *match_data;
 extern uint32_t ovector_size;
 extern char *default_script;
 extern size_t default_script_size;
+extern char *shell;
 
 void match_file(char*);
 void match_stdin(void);
