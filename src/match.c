@@ -30,15 +30,17 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#define IS_SPACE(chr) ((chr) == ' ' || (chr) == '\t')
+#define HAS_NULL_FLAG 0x1
+#define HAS_NO_SH_FLAG 0x2
 
 static const char *do_check_script(const char *script, size_t script_size, char **msg)
 {
 	const int max_args = 1000;
-	const char *src, *src_end;
+	const char *src, *src_end, *flag_start;
 	PCRE2_SIZE capture_id;
-	size_t args_len;
+	size_t args_len, flag_len;
 	int in_group = 0;
+	int flags = 0;
 
 	if (script == NULL || script_size == 0) {
 		return NULL;
@@ -47,12 +49,41 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 	src = script;
 	src_end = script + script_size;
 
-	if (*src == '!') {
+	while (src < src_end && IS_SPACE(*src)) {
 		src++;
 	}
 
-	while (src < src_end && IS_SPACE(*src)) {
+	while (*src == '!') {
 		src++;
+
+		flag_start = src;
+		while (src < src_end && *src != '\0' && !IS_SPACE(*src)) {
+			src++;
+		}
+
+		flag_len = src - flag_start;
+		if (flag_len == 4 && memcmp (flag_start, "null", 4) == 0) {
+			if (flags & HAS_NULL_FLAG) {
+				*msg = "duplicated !null flag";
+				return flag_start - 1;
+			}
+			flags |= HAS_NULL_FLAG;
+		}
+		else if (flag_len == 5 && memcmp (flag_start, "no_sh", 5) == 0) {
+			if (flags & HAS_NO_SH_FLAG) {
+				*msg = "duplicated !no_sh flag";
+				return flag_start - 1;
+			}
+			flags |= HAS_NO_SH_FLAG;
+		}
+		else {
+			*msg = "unknown flag";
+			return flag_start - 1;
+		}
+
+		while (src < src_end && IS_SPACE(*src)) {
+			src++;
+		}
 	}
 
 	if (src == src_end) {
@@ -61,46 +92,41 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 
 	args_len = 1;
 
-	if (*src == '<') {
-		in_group = 1;
-		src++;
-	}
-
 	do {
-		if ((!in_group && IS_SPACE(*src)) || (in_group && *src == '>')) {
-			args_len++;
-			src++;
+		args_len++;
+		if (args_len > max_args) {
+			break;
+		}
 
-			if (in_group) {
-				if (src < src_end && !IS_SPACE(*src)) {
-					*msg = "> must be followed by white space(es) for readability";
+		in_group = 0;
+
+		if (*src == '<') {
+			in_group = 1;
+			src++;
+		}
+
+		while (1) {
+			if (src == src_end) {
+				if (in_group) {
+					*msg = "missing > at the end";
 					return src;
 				}
-			}
-
-			while (src < src_end && IS_SPACE(*src)) {
-				src++;
-			}
-
-			in_group = 0;
-
-			if (src == src_end) {
-				args_len--;
 				break;
 			}
 
-			if (args_len > max_args) {
+			if ((!in_group && IS_SPACE(*src)) || (in_group && *src == '>')) {
+				src++;
+				while (src < src_end && IS_SPACE(*src)) {
+					src++;
+				}
 				break;
 			}
 
-			if (*src == '<') {
-				in_group = 1;
-				src++;
-			}
-			continue;
-		}
-		else if (*src == '%') {
 			src++;
+
+			if (src[-1] != '%') {
+				continue;
+			}
 
 			if (src >= src_end) {
 				*msg = "a character must be present after % sign";
@@ -119,10 +145,10 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 					src++;
 				} while (src < src_end && *src >= '0' && *src <= '9');
 
-				/* To negate the effect of src++ below. */
-				src--;
+				continue;
 			}
-			else if (*src == '{') {
+
+			if (*src == '{') {
 				/* Must be a decimal number in parenthesis, e.g: {5} or {38} */
 				src++;
 				capture_id = 0;
@@ -161,27 +187,20 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 						return src;
 					}
 				} while (*src != ']');
-				src++;
 			}
 			else if (*src != '%' && *src != '<' && *src != '>' && *src != 'M') {
 				*msg = "invalid % sign sequence";
 				return src;
 			}
-		}
 
-		src++;
+			src++;
+		}
 	} while (src < src_end);
 
 	if (args_len > max_args) {
 		*msg = "maximum 1000 arguments are allowed";
 		return src;
 	}
-
-	if (in_group) {
-		*msg = "> expected at the end";
-		return src;
-	}
-
 	return 0;
 }
 
@@ -197,7 +216,7 @@ int check_script(const char *script, size_t script_size)
 		fprintf(stderr, "Cannot compile: ");
 		fwrite(script, 1, err_offs, stderr);
 		fprintf(stderr, "<< SYNTAX ERROR HERE >>");
-		fwrite(script + err_offs, 1, script_size - err_offs, stderr);
+		fwrite(err_pos, 1, script_size - err_offs, stderr);
 		fprintf(stderr, "\n    Error at offset %d : %s\n", (int)err_offs, err_msg);
 		return 0;
 	}
@@ -240,10 +259,10 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 {
 	const char *src, *src_end, *src_start;
 	char *str_list_dst;
-	size_t args_len, str_list_len;
+	size_t args_len, str_list_len, flag_len;
 	PCRE2_SIZE capture_id, memcpy_size;
 	char **args, **args_dst;
-	int result, in_group, dev_null = 0;
+	int result, in_group, flags = 0;
 	pid_t pid;
 
 	if (script == NULL || script_size == 0) {
@@ -255,13 +274,29 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 	src = script;
 	src_end = script + script_size;
 
-	if (src < src_end && *src == '!') {
-		dev_null = 1;
+	while (src < src_end && IS_SPACE(*src)) {
 		src++;
 	}
 
-	while (src < src_end && IS_SPACE(*src)) {
+	while (*src == '!') {
 		src++;
+
+		src_start = src;
+		while (src < src_end && *src != '\0' && !IS_SPACE(*src)) {
+			src++;
+		}
+
+		flag_len = src - src_start;
+		if (flag_len == 4) {
+			flags |= HAS_NULL_FLAG;
+		}
+		else if (flag_len == 5) {
+			flags |= HAS_NO_SH_FLAG;
+		}
+
+		while (src < src_end && IS_SPACE(*src)) {
+			src++;
+		}
 	}
 
 	if (src == src_end) {
@@ -273,8 +308,8 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 	in_group = 0;
 	src_start = src;
 
-	if (shell != NULL) {
-		args_len += 3;
+	if (!(flags & HAS_NO_SH_FLAG)) {
+		args_len += shell_args;
 	}
 
 	if (*src == '<') {
@@ -375,11 +410,10 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 	args_dst = args;
 	str_list_dst = (char*)(args + args_len);
 
-	if (shell != NULL) {
-		*args_dst++ = shell;
-		*args_dst++ = "-c";
-		*args_dst++ = str_list_dst;
-		*args_dst++ = shell;
+	if (!(flags & HAS_NO_SH_FLAG) && shell_args > 0) {
+		memcpy(args_dst, shell, shell_args * sizeof(char*));
+		args_dst[shell_arg0_index] = str_list_dst;
+		args_dst += shell_args;
 	}
 	else {
 		*args_dst++ = str_list_dst;
@@ -495,11 +529,11 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 	pid = fork();
 
 	if (pid == 0) {
-		if (dev_null) {
-			dev_null = open("/dev/null", O_WRONLY);
-			if (dev_null > -1) {
-				dup2(dev_null, STDOUT_FILENO);
-				close(dev_null);
+		if (flags & HAS_NULL_FLAG) {
+			result = open("/dev/null", O_WRONLY);
+			if (result > -1) {
+				dup2(result, STDOUT_FILENO);
+				close(result);
 			}
 		}
 

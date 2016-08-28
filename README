@@ -18,7 +18,7 @@ Some examples:
      There is no newline because of the -n parameter.
      Result: A[BC]D
 
-  echo 29 30 31 32 33 | pcresp '(\d+)(*SKIP)(?C#! /usr/bin/expr %1 %% 3 = 0 #)'
+  echo 29 30 31 32 33 | pcresp '(\d+)(*SKIP)(?C# !null /usr/bin/expr %1 %% 3 = 0 #)'
      This command prints those decimal numbers whose are divisible by 3.
      This condition is checked by 'expr number % 3 = 0'.
      The return value of expr influence the matching: zero - continue, non-zero fail.
@@ -28,14 +28,27 @@ Some examples:
     INC=`expr $2 + 1`
     echo $1 : $INC
   '
-  echo A7 BB29 | pcresp -d prog "$SRC" -s "/bin/bash -c %[prog] script_name %1 %2" '([A-Z]+)(\d+)'
+  echo A7 BB29 | pcresp -d prog "$SRC" -s "/bin/bash -c %[prog] arg0 %1 %2" '([A-Z]+)(\d+)'
     This example shows an easy way to embed strings (usually source codes).
     The source referenced %[0] is not processed by pcresp.
     Result:
       A : 8
       BB : 30
 
-  echo A7 BB29 | pcresp --def-string prog "$SRC" --shell "/bin/bash" -s "%[prog] %1 %2" '([A-Z]+)(\d+)'
+  SRC='
+    INC=`expr $2 + 1`
+    echo $1 : $INC
+  '
+  echo A7 BB29 | pcresp --def-string prog "$SRC" --shell "/bin/bash -c ? arg0" \
+      -s "%[prog] %1 %2" '([A-Z]+)(\d+)'
+    Same as above
+
+  export PCRESP_SHELL="/bin/bash -c ? arg0"
+  SRC='
+    INC=`expr $2 + 1`
+    echo $1 : $INC
+  '
+  echo A7 BB29 | pcresp -d prog "$SRC" -s "%[prog] %1 %2" '([A-Z]+)(\d+)'
     Same as above
 
 Usage pcresp [options] pcre_pattern [file list]
@@ -45,7 +58,7 @@ Usage pcresp [options] pcre_pattern [file list]
   -s, --script script
           Executing this script after each successul match
   -p, --print
-          Print text between matched strings
+          Prints characters between matched strings
   -d, --def-string name string
           Define a constant string (see %[name])
   -i
@@ -58,9 +71,8 @@ Usage pcresp [options] pcre_pattern [file list]
           Enable UTF-8
   --match-max n
           Stop after n successful match (0 - unlimited)
-  --shell shell_name
-          Specify default shell for scripts:
-          shell_name -c [first arg] shell_name [followup args]
+  --shell default-shell
+          Specify the default shell for each script
   --newline-lf
           Set newline type to LF (linefeed) only (\n)
   --newline-cr
@@ -80,21 +92,49 @@ Usage pcresp [options] pcre_pattern [file list]
 
 Pattern format:
 
-    Patterns must follow PCRE2 regular expression syntax
-    Scripts can be executed during matching using (?C) callouts
+  Patterns must follow PCRE2 regular expression syntax
+  Scripts can be executed during matching using (?C) callouts
 
 Script format:
 
-  path_to_executable argument1 argument2 ...
+  A list of arguments separated by white space(s)
+  The first argument must be an executable file
 
-  arguments can be enclosed in <> bracket
-  if script starts with ! the output is discarded
+Recognized % (percent sign) sequences:
 
-Special character sequences for scripts:
-  %idx     - string value of capture block idx (0-65535)
-  %{idx}   - string value of capture block idx (0-65535)
-  %[name]  - insert constant string by name
-  %M       - current MARK value
-  %%       - % (percent) sign
-  %<       - less-than sign character
-  %>       - greater-than sign character
+  Sequences marked by [*] are not accepted by --shell
+
+  %idx      - string value of capture block idx (0-65535) [*]
+  %{idx}    - string value of capture block idx (0-65535) [*]
+  %[name]   - insert constant string by name [*]
+  %M        - current MARK value [*]
+  %%        - % (percent) sign
+  %<        - less-than sign character
+  %>        - greater-than sign character
+
+Script arguments can be preceeded by control flags:
+
+  !null     - discard output
+  !no_sh    - default-shell (--shell) is not used
+
+Arguments enclosed in <> brackets:
+
+  Arguments can be enclosed in <> brackets. These enclosed
+  arguments are never recognised as special arguments such
+  as control flags but % sequences are still recognized.
+
+  Examples: <argument with spaces> <!null> <?>
+            a '/bin/echo <%%>' script prints a % sign
+
+Setting the default shell:
+
+  The default shell can be set by the --shell option or by the
+  PCRESP_SHELL environment variable.
+
+  Example: --shell '/bin/bash -c ? my_script'
+
+  The arguments defined by the default shell are added before
+  the arguments provided by the currently executed script.
+  If a question mark argument is present in the default script
+  it will be replaced by the first argument of the script and
+  this first argument is not appended after the default shell.

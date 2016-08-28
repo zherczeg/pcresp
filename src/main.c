@@ -36,7 +36,9 @@ pcre2_match_data *match_data;
 uint32_t ovector_size;
 char *default_script;
 size_t default_script_size;
-char *shell;
+char **shell;
+int shell_args;
+int shell_arg0_index;
 
 static void help(const char *name)
 {
@@ -55,7 +57,7 @@ static void help(const char *name)
 		"  -s, --script script\n"
 		"          Executing this script after each successul match\n"
 		"  -p, --print\n"
-		"          Print text between matched strings\n"
+		"          Prints characters between matched strings\n"
 		"  -d, --def-string name string\n"
 		"          Define a constant string (see %%[name])\n"
 		"  -i\n"
@@ -68,9 +70,8 @@ static void help(const char *name)
 		"          Enable UTF-8\n"
 		"  --match-max n\n"
 		"          Stop after n successful match (0 - unlimited)\n"
-		"  --shell shell_name\n"
-		"          Specify default shell for scripts:\n"
-		"          shell_name -c [first arg] shell_name [followup args]\n"
+		"  --shell default-shell\n"
+		"          Specify the default shell for each script\n"
 		"  --newline-lf\n"
 		"          Set newline type to LF (linefeed) only (\\n)\n"
 		"  --newline-cr\n"
@@ -87,20 +88,38 @@ static void help(const char *name)
 		"          Set \\R to match any Unicode newline sequence\n"
 		"\n  Reads from stdin if file list is empty\n"
 		"\nPattern format:\n"
-		"\n    Patterns must follow PCRE2 regular expression syntax\n"
-		"    Scripts can be executed during matching using (?C) callouts\n"
+		"\n  Patterns must follow PCRE2 regular expression syntax\n"
+		"  Scripts can be executed during matching using (?C) callouts\n"
 		"\nScript format:\n"
-		"\n  path_to_executable argument1 argument2 ...\n"
-		"\n  arguments can be enclosed in <> bracket\n"
-		"  if script starts with ! the output is discarded\n"
-		"\nSpecial character sequences for scripts:\n"
-		"  %%idx     - string value of capture block idx (0-65535)\n"
-		"  %%{idx}   - string value of capture block idx (0-65535)\n"
-		"  %%[name]  - insert constant string by name\n"
-		"  %%M       - current MARK value\n"
-		"  %%%%       - %% (percent) sign\n"
-		"  %%<       - less-than sign character\n"
-		"  %%>       - greater-than sign character\n",
+		"\n  A list of arguments separated by white space(s)\n"
+		"  The first argument must be an executable file\n"
+		"\nRecognized %% (percent sign) sequences:\n"
+		"\n  Sequences marked by [*] are not accepted by --shell\n\n"
+		"  %%idx      - string value of capture block idx (0-65535) [*]\n"
+		"  %%{idx}    - string value of capture block idx (0-65535) [*]\n"
+		"  %%[name]   - insert constant string by name [*]\n"
+		"  %%M        - current MARK value [*]\n"
+		"  %%%%        - %% (percent) sign\n"
+		"  %%<        - less-than sign character\n"
+		"  %%>        - greater-than sign character\n"
+		"\nScript arguments can be preceeded by control flags:\n\n"
+		"  !null     - discard output\n"
+		"  !no_sh    - default-shell (--shell) is not used\n"
+		"\nArguments enclosed in <> brackets:\n"
+		"\n  Arguments can be enclosed in <> brackets. These enclosed\n"
+		"  arguments are never recognised as special arguments such\n"
+		"  as control flags but %% sequences are still recognized.\n"
+		"\n  Examples: <argument with spaces> <!null> <?>\n"
+		"            a '/bin/echo <%%%%>' script prints a %% sign\n"
+		"\nSetting the default shell:\n"
+		"\n  The default shell can be set by the --shell option or by the\n"
+		"  PCRESP_SHELL environment variable.\n"
+		"\n  Example: --shell '/bin/bash -c ? my_script'\n"
+		"\n  The arguments defined by the default shell are added before\n"
+		"  the arguments provided by the currently executed script.\n"
+		"  If a question mark argument is present in the default script\n"
+		"  it will be replaced by the first argument of the script and\n"
+		"  this first argument is not appended after the default shell.\n",
 		name);
 }
 
@@ -201,6 +220,7 @@ static int pcresp_main(int argc, char* argv[])
 	pcre2_compile_context *compile_context;
 	pcre2_jit_stack *jit_stack;
 	uint32_t options = 0;
+	char *shell_arg = NULL;
 	int newline = -1;
 	int bsr = -1;
 
@@ -265,10 +285,7 @@ static int pcresp_main(int argc, char* argv[])
 					fprintf(stderr, "String required after --shell\n");
 					return 1;
 				}
-				shell = argv[arg_index++];
-				if (*shell == '\0') {
-					shell = NULL;
-				}
+				shell_arg = argv[arg_index++];
 				continue;
 			}
 			else if (strcmp(arg, "newline-lf") == 0) {
@@ -346,15 +363,23 @@ static int pcresp_main(int argc, char* argv[])
 		return 1;
 	}
 
-	if (arg_index >= argc) {
-		fprintf(stderr, "Pattern required!\n");
-		return 1;
-	}
-
 	if (default_script != NULL) {
 		if (!check_script(default_script, default_script_size)) {
 			return 1;
 		}
+	}
+
+	if (shell_arg == NULL) {
+		shell_arg = getenv("PCRESP_SHELL");
+	}
+
+	if (shell_arg != NULL && !parse_shell(shell_arg)) {
+		return 1;
+	}
+
+	if (arg_index >= argc) {
+		fprintf(stderr, "Pattern required!\n");
+		return 1;
 	}
 
 	compile_context = pcre2_compile_context_create(NULL);
@@ -451,6 +476,9 @@ int main(int argc, char* argv[])
 	}
 	if (ext_string_list != NULL) {
 		free(ext_string_list);
+	}
+	if (shell != NULL) {
+		free(shell);
 	}
 	return result;
 }

@@ -14,7 +14,7 @@ TARGET = pcresp
 BINDIR = bin
 SRCDIR = src
 
-OBJS = $(addprefix $(BINDIR)/, main.o load.o match.o)
+OBJS = $(addprefix $(BINDIR)/, main.o load.o match.o shell.o)
 
 all: $(BINDIR) $(TARGET)
 

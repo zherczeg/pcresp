@@ -33,6 +33,8 @@
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include "pcre2.h"
 
+#define IS_SPACE(chr) ((chr) == ' ' || (chr) == '\t')
+
 typedef struct ext_string {
 	const char *name;
 	size_t name_length;
@@ -50,12 +52,15 @@ extern pcre2_match_data *match_data;
 extern uint32_t ovector_size;
 extern char *default_script;
 extern size_t default_script_size;
-extern char *shell;
+extern char **shell;
+extern int shell_args;
+extern int shell_arg0_index;
 
 void match_file(char*);
 void match_stdin(void);
 void match(char*, size_t);
 int check_script(const char *, size_t);
 int run_script(const char *, size_t, const char *, PCRE2_SIZE *, char *);
+int parse_shell(const char *);
 
 #endif /* PCRESP_H */
