@@ -26,8 +26,10 @@
 
 #include "pcresp.h"
 
+int verbose;
+int match_found;
 int print_text;
-int match_max;
+int match_limit;
 int ext_string_count;
 ext_string* ext_string_list;
 pcre2_code *re_code;
@@ -60,33 +62,40 @@ static void help(const char *name)
 		"          Prints characters between matched strings\n"
 		"  -d, --def-string name string\n"
 		"          Define a constant string (see %%[name])\n"
+		"  --shell default-shell\n"
+		"          Specify the default shell for each script\n"
+		"  [--pattern] pcre2_pattern\n"
+		"          Specify the pattern. The --pattern can be omitted\n"
+		"          if the pattern does not start with dash\n"
+		"  --limit n\n"
+		"          Stop after n successful match (0 - unlimited)\n"
 		"  -i\n"
 		"          Enable caseless matching\n"
 		"  -m\n"
 		"          Both ^ and $ match newlines\n"
 		"  -x\n"
 		"          Ignore white space and # comments (extended regex)\n"
-		"  -u\n"
+		"  -u, --utf\n"
 		"          Enable UTF-8\n"
-		"  --match-max n\n"
-		"          Stop after n successful match (0 - unlimited)\n"
-		"  --shell default-shell\n"
-		"          Specify the default shell for each script\n"
-		"  --newline-lf\n"
-		"          Set newline type to LF (linefeed) only (\\n)\n"
-		"  --newline-cr\n"
-		"          Set newline type to CR (carriage return) only (\\r)\n"
-		"  --newline-crlf\n"
-		"          Set newline type to CR followed by LF only (\\r\\n)\n"
-		"  --newline-anycrlf\n"
-		"          Set newline type to any combination of CR and LF\n"
-		"  --newline-any\n"
-		"          Set newline type to any Unicode newline sequence\n"
-		"  --bsr-anycrlf\n"
-		"          Set \\R to match any combination of CR and LF\n"
-		"  --bsr-unicode\n"
-		"          Set \\R to match any Unicode newline sequence\n"
+		"  --dot-all\n"
+		"          Dot matches to any character\n"
+		"  --newline-[type]\n"
+		"          [type] can be: lf (linefeed), cr (carriage return)\n"
+		"          crlf (CR followed by LF), anycrlf (any combination of\n"
+		"          CR and LF), unicode (any Unicode newline sequence)\n"
+		"  --bsr-[type]\n"
+		"          [type] can be: anycrlf (any combination of CR and LF),\n"
+		"          unicode (any Unicode newline sequence)\n"
+		"  --verbose\n"
+		"          Display executed commands (useful for debugging)\n"
+		"  --end\n"
+		"          End of parameter list. If the pattern has not\n"
+		"          specified yet it must be the next argument\n"
 		"\n  Reads from stdin if file list is empty\n"
+		"\nReturn value:\n"
+		"  0 - pattern matched at least once\n"
+		"  1 - pattern does not match\n"
+		"  2 - error occured\n"
 		"\nPattern format:\n"
 		"\n  Patterns must follow PCRE2 regular expression syntax\n"
 		"  Scripts can be executed during matching using (?C) callouts\n"
@@ -95,13 +104,15 @@ static void help(const char *name)
 		"  The first argument must be an executable file\n"
 		"\nRecognized %% (percent sign) sequences:\n"
 		"\n  Sequences marked by [*] are not accepted by --shell\n\n"
-		"  %%idx      - string value of capture block idx (0-65535) [*]\n"
-		"  %%{idx}    - string value of capture block idx (0-65535) [*]\n"
-		"  %%[name]   - insert constant string by name [*]\n"
-		"  %%M        - current MARK value [*]\n"
-		"  %%%%        - %% (percent) sign\n"
-		"  %%<        - less-than sign character\n"
-		"  %%>        - greater-than sign character\n"
+		"  %%idx        - string value of capture block idx (0-65535) [*]\n"
+		"  %%{idx}      - string value of capture block idx (0-65535) [*]\n"
+		"  %%[name]     - insert constant string by name [*]\n"
+		"  %%{idx,name} - same as %%{idx} if capture block is not empty\n"
+		"                same as %%[name] otherwise [*]\n"
+		"  %%M          - current MARK value [*]\n"
+		"  %%%%          - %% (percent) sign\n"
+		"  %%<          - less-than sign character\n"
+		"  %%>          - greater-than sign character\n"
 		"\nScript arguments can be preceeded by control flags:\n\n"
 		"  !null     - discard output\n"
 		"  !no_sh    - default-shell (--shell) is not used\n"
@@ -221,12 +232,13 @@ static int pcresp_main(int argc, char* argv[])
 	pcre2_jit_stack *jit_stack;
 	uint32_t options = 0;
 	char *shell_arg = NULL;
+	char *pattern = NULL;
 	int newline = -1;
 	int bsr = -1;
 
 	if (argc <= 1) {
 		help(argv[0]);
-		return 0;
+		return 2;
 	}
 
 	arg_index = 1;
@@ -234,21 +246,27 @@ static int pcresp_main(int argc, char* argv[])
 		char *arg = argv[arg_index];
 
 		if (arg[0] != '-') {
-			break;
+			if (pattern != NULL) {
+				break;
+			}
+			pattern = arg;
+			arg_index++;
+			continue;
 		}
 
 		arg_index++;
 
 		if (arg[1] == '-') {
 			arg += 2;
+
 			if (strcmp(arg, "help") == 0) {
 				help(argv[0]);
-				return 0;
+				return 2;
 			}
 			else if (strcmp(arg, "script") == 0) {
 				if (arg_index >= argc) {
 					fprintf(stderr, "Script required after --script\n");
-					return 1;
+					return 2;
 				}
 				default_script = argv[arg_index++];
 				default_script_size = (size_t)strlen(default_script);
@@ -261,60 +279,103 @@ static int pcresp_main(int argc, char* argv[])
 			else if (strcmp(arg, "def-string") == 0) {
 				if (arg_index + 1>= argc) {
 					fprintf(stderr, "Name and string required after --def-string\n");
-					return 1;
+					return 2;
 				}
 				if (!add_ext_string(argv[arg_index], argv[arg_index + 1])) {
-					return 1;
+					return 2;
 				}
 				arg_index += 2;
-				continue;
-			}
-			else if (strcmp(arg, "match-max") == 0) {
-				if (arg_index >= argc) {
-					fprintf(stderr, "Number required after --max-match\n");
-					return 1;
-				}
-				match_max = read_int(argv[arg_index++], 100000000);
-				if (match_max == -1) {
-					return 1;
-				}
 				continue;
 			}
 			else if (strcmp(arg, "shell") == 0) {
 				if (arg_index >= argc) {
 					fprintf(stderr, "String required after --shell\n");
-					return 1;
+					return 2;
 				}
 				shell_arg = argv[arg_index++];
 				continue;
 			}
-			else if (strcmp(arg, "newline-lf") == 0) {
-				newline = PCRE2_NEWLINE_LF;
+			else if (strcmp(arg, "pattern") == 0) {
+				if (pattern != NULL) {
+					fprintf(stderr, "The pattern has been spcified\n");
+					return 2;
+				}
+				if (arg_index >= argc) {
+					fprintf(stderr, "PCRE2 pattern required after --pattern\n");
+					return 2;
+				}
+				pattern = argv[arg_index++];
 				continue;
 			}
-			else if (strcmp(arg, "newline-cr") == 0) {
-				newline = PCRE2_NEWLINE_CR;
+			else if (strcmp(arg, "limit") == 0) {
+				if (arg_index >= argc) {
+					fprintf(stderr, "Number required after --limit\n");
+					return 2;
+				}
+				match_limit = read_int(argv[arg_index++], 100000000);
+				if (match_limit == -1) {
+					return 2;
+				}
 				continue;
 			}
-			else if (strcmp(arg, "newline-crlf") == 0) {
-				newline = PCRE2_NEWLINE_CRLF;
+			else if (strcmp(arg, "utf") == 0) {
+				options |= PCRE2_UTF;
 				continue;
 			}
-			else if (strcmp(arg, "newline-anycrlf") == 0) {
-				newline = PCRE2_NEWLINE_ANYCRLF;
+			else if (strcmp(arg, "dot-all") == 0) {
+				options |= PCRE2_DOTALL;
 				continue;
 			}
-			else if (strcmp(arg, "newline-any") == 0) {
-				newline = PCRE2_NEWLINE_ANY;
+			else if (strlen(arg) >= 8 && memcmp(arg, "newline-", 8) == 0) {
+				arg += 8;
+				if (strcmp(arg, "lf") == 0) {
+					newline = PCRE2_NEWLINE_LF;
+				}
+				else if (strcmp(arg, "cr") == 0) {
+					newline = PCRE2_NEWLINE_CR;
+				}
+				else if (strcmp(arg, "crlf") == 0) {
+					newline = PCRE2_NEWLINE_CRLF;
+				}
+				else if (strcmp(arg, "anycrlf") == 0) {
+					newline = PCRE2_NEWLINE_ANYCRLF;
+				}
+				else if (strcmp(arg, "unicode") == 0) {
+					newline = PCRE2_NEWLINE_ANY;
+				}
+				else {
+					fprintf(stderr, "Unknown newline type: '%s'\n", arg);
+					return 2;
+				}
 				continue;
 			}
-			else if (strcmp(arg, "bsr-anycrlf") == 0) {
-				bsr = PCRE2_BSR_ANYCRLF;
+			else if (strlen(arg) >= 4 && memcmp(arg, "bsr-", 4) == 0) {
+				arg += 4;
+				if (strcmp(arg, "anycrlf") == 0) {
+					bsr = PCRE2_BSR_ANYCRLF;
+				}
+				else if (strcmp(arg, "unicode") == 0) {
+					bsr = PCRE2_BSR_UNICODE;
+				}
+				else {
+					fprintf(stderr, "Unknown bsr newline type: '%s'\n", arg);
+					return 2;
+				}
 				continue;
 			}
-			else if (strcmp(arg, "bsr-unicode") == 0) {
-				bsr = PCRE2_BSR_UNICODE;
+			else if (strcmp(arg, "verbose") == 0) {
+				verbose = 1;
 				continue;
+			}
+			else if (strcmp(arg, "end") == 0) {
+				if (pattern == NULL) {
+					if (arg_index >= argc) {
+						fprintf(stderr, "PCRE2 pattern required after --end\n");
+						return 2;
+					}
+					pattern = argv[arg_index++];
+				}
+				break;
 			}
 			arg -= 2;
 		}
@@ -322,11 +383,11 @@ static int pcresp_main(int argc, char* argv[])
 			switch (arg[1]) {
 			case 'h':
 				help(argv[0]);
-				return 0;
+				return 2;
 			case 's':
 				if (arg_index >= argc) {
 					fprintf(stderr, "Script required after -s\n");
-					return 1;
+					return 2;
 				}
 				default_script = argv[arg_index++];
 				default_script_size = (size_t)strlen(default_script);
@@ -337,10 +398,10 @@ static int pcresp_main(int argc, char* argv[])
 			case 'd':
 				if (arg_index + 1>= argc) {
 					fprintf(stderr, "Name and string required after -d\n");
-					return 1;
+					return 2;
 				}
 				if (!add_ext_string(argv[arg_index], argv[arg_index + 1])) {
-					return 1;
+					return 2;
 				}
 				arg_index += 2;
 				continue;
@@ -360,12 +421,12 @@ static int pcresp_main(int argc, char* argv[])
 		}
 
 		fprintf(stderr, "Unknown argument: %s\n", arg);
-		return 1;
+		return 2;
 	}
 
 	if (default_script != NULL) {
 		if (!check_script(default_script, default_script_size)) {
-			return 1;
+			return 2;
 		}
 	}
 
@@ -374,18 +435,18 @@ static int pcresp_main(int argc, char* argv[])
 	}
 
 	if (shell_arg != NULL && !parse_shell(shell_arg)) {
-		return 1;
+		return 2;
 	}
 
-	if (arg_index >= argc) {
-		fprintf(stderr, "Pattern required!\n");
-		return 1;
+	if (pattern == NULL) {
+		fprintf(stderr, "Missing PCRE2 pattern\n");
+		return 2;
 	}
 
 	compile_context = pcre2_compile_context_create(NULL);
 	if (!compile_context) {
 		fprintf(stderr, "Cannot create context\n");
-		return 1;
+		return 2;
 	}
 	if (newline != -1) {
 		pcre2_set_newline(compile_context, (uint32_t)newline);
@@ -394,7 +455,11 @@ static int pcresp_main(int argc, char* argv[])
 		pcre2_set_bsr(compile_context, (uint32_t)bsr);
 	}
 
-	re_code = pcre2_compile((uint8_t*)(argv[arg_index]), PCRE2_ZERO_TERMINATED, options,
+	if (verbose) {
+		fprintf(stderr, "Verbose: compiling '%s'\n", pattern);
+	}
+
+	re_code = pcre2_compile((uint8_t*)pattern, PCRE2_ZERO_TERMINATED, options,
 				&error_code, &error_offset, compile_context);
 	pcre2_compile_context_free(compile_context);
 
@@ -412,14 +477,12 @@ static int pcresp_main(int argc, char* argv[])
 			free(buffer);
 		}
 
-		return 1;
+		return 2;
 	}
 
 	if (pcre2_callout_enumerate(re_code, enumerate_callback, NULL)) {
-		return 1;
+		return 2;
 	}
-
-	arg_index++;
 
 	match_context = pcre2_match_context_create(NULL);
 	match_data = pcre2_match_data_create_from_pattern(re_code, NULL);
@@ -433,7 +496,7 @@ static int pcresp_main(int argc, char* argv[])
 		}
 
 		fprintf(stderr, "Cannot create match context\n");
-		return 1;
+		return 2;
 	}
 
 	jit_stack = pcre2_jit_stack_create(64 * 1024, 8 * 1024 * 1024, NULL);
@@ -449,10 +512,16 @@ static int pcresp_main(int argc, char* argv[])
 	ovector_size = pcre2_get_ovector_count(match_data);
 
 	if (arg_index >= argc) {
+		if (verbose) {
+			fprintf(stderr, "Verbose: reading data from stdin\n");
+		}
 		match_stdin();
 	}
 	else {
 		while (arg_index < argc) {
+			if (verbose) {
+				fprintf(stderr, "Verbose: reading data from '%s'\n", argv[arg_index]);
+			}
 			match_file(argv[arg_index]);
 			arg_index++;
 		}
@@ -464,7 +533,7 @@ static int pcresp_main(int argc, char* argv[])
 
 	pcre2_match_context_free(match_context);
 	pcre2_match_data_free(match_data);
-	return 0;
+	return !match_found;
 }
 
 int main(int argc, char* argv[])

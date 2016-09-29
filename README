@@ -13,10 +13,10 @@ Some examples:
      The unmatched characters are printed because of -p.
      Result: AD
 
-  echo ABCD | pcresp -s '/bin/echo -n [%0]' -p '[BC]+'
+  echo ABCD | pcresp -p '[BC]+' -s '/bin/echo -n {%0}'
      The echo program prints its arguments.
      There is no newline because of the -n parameter.
-     Result: A[BC]D
+     Result: A{BC}D
 
   echo 29 30 31 32 33 | pcresp '(\d+)(*SKIP)(?C# !null /usr/bin/expr %1 %% 3 = 0 #)'
      This command prints those decimal numbers whose are divisible by 3.
@@ -61,34 +61,42 @@ Usage pcresp [options] pcre_pattern [file list]
           Prints characters between matched strings
   -d, --def-string name string
           Define a constant string (see %[name])
+  --shell default-shell
+          Specify the default shell for each script
+  [--pattern] pcre2_pattern
+          Specify the pattern. The --pattern can be omitted
+          if the pattern does not start with dash
+  --limit n
+          Stop after n successful match (0 - unlimited)
   -i
           Enable caseless matching
   -m
           Both ^ and $ match newlines
   -x
           Ignore white space and # comments (extended regex)
-  -u
+  -u, --utf
           Enable UTF-8
-  --match-max n
-          Stop after n successful match (0 - unlimited)
-  --shell default-shell
-          Specify the default shell for each script
-  --newline-lf
-          Set newline type to LF (linefeed) only (\n)
-  --newline-cr
-          Set newline type to CR (carriage return) only (\r)
-  --newline-crlf
-          Set newline type to CR followed by LF only (\r\n)
-  --newline-anycrlf
-          Set newline type to any combination of CR and LF
-  --newline-any
-          Set newline type to any Unicode newline sequence
-  --bsr-anycrlf
-          Set \R to match any combination of CR and LF
-  --bsr-unicode
-          Set \R to match any Unicode newline sequence
+  --dot-all
+          Dot matches to any character
+  --newline-[type]
+          [type] can be: lf (linefeed), cr (carriage return)
+          crlf (CR followed by LF), anycrlf (any combination of
+          CR and LF), unicode (any Unicode newline sequence)
+  --bsr-[type]
+          [type] can be: anycrlf (any combination of CR and LF),
+          unicode (any Unicode newline sequence)
+  --verbose
+          Display executed commands (useful for debugging)
+  --end
+          End of parameter list. If the pattern has not
+          specified yet it must be the next argument
 
   Reads from stdin if file list is empty
+
+Return value:
+  0 - pattern matched at least once
+  1 - pattern does not match
+  2 - error occured
 
 Pattern format:
 
@@ -104,13 +112,15 @@ Recognized % (percent sign) sequences:
 
   Sequences marked by [*] are not accepted by --shell
 
-  %idx      - string value of capture block idx (0-65535) [*]
-  %{idx}    - string value of capture block idx (0-65535) [*]
-  %[name]   - insert constant string by name [*]
-  %M        - current MARK value [*]
-  %%        - % (percent) sign
-  %<        - less-than sign character
-  %>        - greater-than sign character
+  %idx        - string value of capture block idx (0-65535) [*]
+  %{idx}      - string value of capture block idx (0-65535) [*]
+  %[name]     - insert constant string by name [*]
+  %{idx,name} - same as %{idx} if capture block is not empty
+                same as %[name] otherwise [*]
+  %M          - current MARK value [*]
+  %%          - % (percent) sign
+  %<          - less-than sign character
+  %>          - greater-than sign character
 
 Script arguments can be preceeded by control flags:
 

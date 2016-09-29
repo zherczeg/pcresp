@@ -167,8 +167,29 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 					}
 
 					src++;
-					if (src < src_end && *src == '}') {
+					if (src < src_end && (*src == '}' || *src == ',')) {
 						break;
+					}
+
+				}
+
+				if (*src == ',') {
+					src++;
+
+					if (src >= src_end || *src == '}') {
+						*msg = "string name cannot be empty";
+						return src;
+					}
+
+					while (1) {
+						src++;
+						if (src >= src_end) {
+							*msg = "string name is not terminated by '}'";
+							return src;
+						}
+						if (*src == '}') {
+							break;
+						}
 					}
 				}
 			}
@@ -223,17 +244,22 @@ int check_script(const char *script, size_t script_size)
 	return 1;
 }
 
-static size_t get_capture_size(PCRE2_SIZE capture_id, PCRE2_SIZE *ovector, const char *script)
+static size_t get_capture_len(PCRE2_SIZE capture_id, PCRE2_SIZE *ovector, const char *script)
 {
 	if (capture_id >= ovector_size) {
-		return 0;
+		return PCRE2_UNSET;
 	}
 
 	if (capture_id == 0 && script != default_script) {
-		return 0;
+		return PCRE2_UNSET;
 	}
 
 	capture_id *= 2;
+
+	if (ovector[capture_id] == PCRE2_UNSET) {
+		return PCRE2_UNSET;
+	}
+
 	if (ovector[capture_id + 1] <= ovector[capture_id]) {
 		return 0;
 	}
@@ -259,10 +285,12 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 {
 	const char *src, *src_end, *src_start;
 	char *str_list_dst;
-	size_t args_len, str_list_len, flag_len;
-	PCRE2_SIZE capture_id, memcpy_size;
+	size_t args_len, str_list_len, string_name_len, length;
+	PCRE2_SIZE capture_id;
+	const char *string_name;
 	char **args, **args_dst;
 	int result, in_group, flags = 0;
+	ext_string *string;
 	pid_t pid;
 
 	if (script == NULL || script_size == 0) {
@@ -286,11 +314,11 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			src++;
 		}
 
-		flag_len = src - src_start;
-		if (flag_len == 4) {
+		length = src - src_start;
+		if (length == 4) {
 			flags |= HAS_NULL_FLAG;
 		}
-		else if (flag_len == 5) {
+		else if (length == 5) {
 			flags |= HAS_NO_SH_FLAG;
 		}
 
@@ -308,8 +336,8 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 	in_group = 0;
 	src_start = src;
 
-	if (!(flags & HAS_NO_SH_FLAG)) {
-		args_len += shell_args;
+	if (!(flags & HAS_NO_SH_FLAG) && shell_args > 0) {
+		args_len += shell_args - 1;
 	}
 
 	if (*src == '<') {
@@ -320,6 +348,7 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 	do {
 		if ((!in_group && IS_SPACE(*src)) || (in_group && *src == '>')) {
 			args_len++;
+			str_list_len++;
 
 			src++;
 			while (src < src_end && IS_SPACE(*src)) {
@@ -329,6 +358,7 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			in_group = 0;
 			if (src == src_end) {
 				args_len--;
+				str_list_len--;
 			}
 			else if (*src == '<') {
 				in_group = 1;
@@ -340,6 +370,7 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 		{
 			src++;
 			capture_id = 0;
+			string_name = NULL;
 
 			if (*src >= '0' && *src <= '9') {
 				do {
@@ -352,13 +383,25 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			}
 			else if (*src == '{')
 			{
+				/* Must be a decimal number in braces, e.g: {5} or {38} */
 				src++;
 
 				do
 				{
 					capture_id = capture_id * 10 + (*src - '0');
 					src++;
-				} while (*src != '}');
+				} while (*src != '}' && *src != ',');
+
+				if (*src == ',') {
+					string_name = src + 1;
+
+					do
+					{
+						src++;
+					} while (*src != '}');
+
+					string_name_len = src - string_name;
+				}
 
 				src++;
 				/* Increase ID */
@@ -366,22 +409,15 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			}
 			else if (*src == '[')
 			{
-				const char *name = src + 1;
-				ext_string *string;
+				string_name = src + 1;
 
 				do
 				{
 					src++;
 				} while (*src != ']');
 
-				string = get_ext_string(name, src - name);
-
-				if (string != NULL) {
-					str_list_len += string->chars_length;
-				}
-
+				string_name_len = src - string_name;
 				src++;
-				continue;
 			}
 			else if (*src == 'M') {
 				if (mark != NULL) {
@@ -392,7 +428,24 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			}
 
 			if (capture_id > 0) {
-				str_list_len += get_capture_size(capture_id - 1, ovector, script);
+				length = get_capture_len(capture_id - 1, ovector, script);
+
+				if (length != PCRE2_UNSET) {
+					str_list_len += length;
+					continue;
+				}
+			}
+
+			if (string_name != NULL) {
+				string = get_ext_string(string_name, string_name_len);
+
+				if (string != NULL) {
+					str_list_len += string->chars_length;
+				}
+				continue;
+			}
+
+			if (capture_id > 0) {
 				continue;
 			}
 		}
@@ -464,14 +517,25 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			}
 			else if (*src == '{')
 			{
-				/* Must be a decimal number in parenthesis, e.g: (5) or (38) */
+				/* Must be a decimal number in braces, e.g: {5} or {38} */
 				src++;
 
 				do
 				{
 					capture_id = capture_id * 10 + (*src - '0');
 					src++;
-				} while (*src != '}');
+				} while (*src != '}' && *src != ',');
+
+				if (*src == ',') {
+					string_name = src + 1;
+
+					do
+					{
+						src++;
+					} while (*src != '}');
+
+					string_name_len = src - string_name;
+				}
 
 				src++;
 				/* Increase ID */
@@ -479,30 +543,21 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			}
 			else if (*src == '[')
 			{
-				const char *name = src + 1;
-				ext_string *string;
+				string_name = src + 1;
 
 				do
 				{
 					src++;
 				} while (*src != ']');
 
-				string = get_ext_string(name, src - name);
-
-				if (string != NULL) {
-					memcpy_size = string->chars_length;
-					memcpy(str_list_dst, string->chars, memcpy_size);
-					str_list_dst += memcpy_size;
-				}
-
+				string_name_len = src - string_name;
 				src++;
-				continue;
 			}
 			else if (*src == 'M') {
 				if (mark != NULL) {
-					memcpy_size = strlen(mark);
-					memcpy(str_list_dst, mark, memcpy_size);
-					str_list_dst += memcpy_size;
+					length = strlen(mark);
+					memcpy(str_list_dst, mark, length);
+					str_list_dst += length;
 				}
 				src++;
 				continue;
@@ -510,11 +565,29 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 
 			if (capture_id > 0) {
 				capture_id--;
-				memcpy_size = get_capture_size(capture_id, ovector, script);
-				if (memcpy_size > 0) {
-					memcpy(str_list_dst, buffer + ovector[capture_id * 2], memcpy_size);
-					str_list_dst += memcpy_size;
+				length = get_capture_len(capture_id, ovector, script);
+
+				if (length != PCRE2_UNSET) {
+					if (length > 0) {
+						memcpy(str_list_dst, buffer + ovector[capture_id * 2], length);
+						str_list_dst += length;
+					}
+					continue;
 				}
+			}
+
+			if (string_name != NULL) {
+				string = get_ext_string(string_name, string_name_len);
+
+				if (string != NULL) {
+					length = string->chars_length;
+					memcpy(str_list_dst, string->chars, length);
+					str_list_dst += length;
+				}
+				continue;
+			}
+
+			if (capture_id > 0) {
 				continue;
 			}
 		}
@@ -522,8 +595,28 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 		*str_list_dst++ = *src++;
 	} while (src < src_end);
 
-	*str_list_dst = '\0';
-	*args_dst = NULL;
+	*str_list_dst++ = '\0';
+	*args_dst++ = NULL;
+
+	if (args + args_len != args_dst) {
+		fprintf(stderr, "Internal error SAN1! Please file a bug report.\n");
+		exit(2);
+	}
+
+	if (((char*)(args + args_len)) + str_list_len != str_list_dst) {
+		fprintf(stderr, "Internal error SAN2! Please file a bug report.\n");
+		exit(2);
+	}
+
+	if (verbose) {
+		args_dst = args;
+		length = 0;
+		while (*args_dst != NULL) {
+			printf("  Verbose: arg[%d]: '%s'\n", (int)length, *args_dst);
+			length++;
+			args_dst++;
+		}
+	}
 
 	fflush(stdout);
 	pid = fork();
@@ -569,6 +662,8 @@ void match(char *buffer, size_t size)
 			break;
 		}
 
+		match_found = 1;
+
 		if (ovector[1] < ovector[0]) {
 			ovector[1] = ovector[0];
 		}
@@ -596,7 +691,7 @@ void match(char *buffer, size_t size)
 		}
 
 		match_count++;
-		if (match_max > 0 && match_count >= match_max) {
+		if (match_limit > 0 && match_count >= match_limit) {
 			break;
 		}
 

@@ -42,8 +42,10 @@ typedef struct ext_string {
 	size_t chars_length;
 } ext_string;
 
+extern int verbose;
+extern int match_found;
 extern int print_text;
-extern int match_max;
+extern int match_limit;
 extern int ext_string_count;
 extern ext_string* ext_string_list;
 extern pcre2_code *re_code;
