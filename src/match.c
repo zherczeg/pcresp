@@ -30,8 +30,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#define HAS_NULL_FLAG 0x1
-#define HAS_NO_SH_FLAG 0x2
+#define HAS_PRINT_FLAG 0x1
+#define HAS_NO_NEWLINE_FLAG 0x2
+#define HAS_NULL_FLAG 0x4
+#define HAS_NO_SH_FLAG 0x8
 
 static const char *do_check_script(const char *script, size_t script_size, char **msg)
 {
@@ -53,7 +55,7 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 		src++;
 	}
 
-	while (*src == '!') {
+	while (*src == '*') {
 		src++;
 
 		flag_start = src;
@@ -62,22 +64,50 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 		}
 
 		flag_len = src - flag_start;
-		if (flag_len == 4 && memcmp (flag_start, "null", 4) == 0) {
+		if (flag_len == 5 && memcmp (flag_start, "print", 5) == 0) {
+			if (flags & HAS_PRINT_FLAG) {
+				*msg = "duplicated *print flag";
+				return flag_start - 1;
+			}
+			flags |= HAS_PRINT_FLAG;
+		}
+		else if (flag_len == 4 && memcmp (flag_start, "null", 4) == 0) {
 			if (flags & HAS_NULL_FLAG) {
-				*msg = "duplicated !null flag";
+				*msg = "duplicated *null flag";
 				return flag_start - 1;
 			}
 			flags |= HAS_NULL_FLAG;
 		}
-		else if (flag_len == 5 && memcmp (flag_start, "no_sh", 5) == 0) {
+		else if (flag_len == 3 && memcmp (flag_start, "!sh", 3) == 0) {
 			if (flags & HAS_NO_SH_FLAG) {
-				*msg = "duplicated !no_sh flag";
+				*msg = "duplicated *!sh flag";
 				return flag_start - 1;
 			}
 			flags |= HAS_NO_SH_FLAG;
 		}
+		else if (flag_len == 3 && memcmp (flag_start, "!nl", 3) == 0) {
+			if (flags & HAS_NO_NEWLINE_FLAG) {
+				*msg = "duplicated *!nl flag";
+				return flag_start - 1;
+			}
+			if (!(flags & HAS_PRINT_FLAG)) {
+				*msg = "*print required before *!nl flag";
+				return flag_start - 1;
+			}
+			flags |= HAS_NO_NEWLINE_FLAG;
+		}
 		else {
 			*msg = "unknown flag";
+			return flag_start - 1;
+		}
+
+		if ((flags & HAS_PRINT_FLAG) && (flags & HAS_NO_SH_FLAG)) {
+			*msg = "*print and *!sh cannot be combined";
+			return flag_start - 1;
+		}
+
+		if ((flags & HAS_PRINT_FLAG) && (flags & HAS_NULL_FLAG)) {
+			*msg = "*print and *null cannot be combined";
 			return flag_start - 1;
 		}
 
@@ -209,7 +239,7 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 					}
 				} while (*src != ']');
 			}
-			else if (*src != '%' && *src != '<' && *src != '>' && *src != 'M') {
+			else if (*src != '%' && *src != '<' && *src != '>' && *src != 'M' && *src != 'n') {
 				*msg = "invalid % sign sequence";
 				return src;
 			}
@@ -306,7 +336,7 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 		src++;
 	}
 
-	while (*src == '!') {
+	while (*src == '*') {
 		src++;
 
 		src_start = src;
@@ -315,11 +345,18 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 		}
 
 		length = src - src_start;
+		if (length == 5) {
+			/* Shell has no effect on print. */
+			flags |= HAS_PRINT_FLAG | HAS_NO_SH_FLAG;
+		}
 		if (length == 4) {
 			flags |= HAS_NULL_FLAG;
 		}
-		else if (length == 5) {
-			flags |= HAS_NO_SH_FLAG;
+		else if (length == 3) {
+			if (src_start[1] == 's')
+				flags |= HAS_NO_SH_FLAG;
+			else
+				flags |= HAS_NO_NEWLINE_FLAG;
 		}
 
 		while (src < src_end && IS_SPACE(*src)) {
@@ -562,6 +599,11 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 				src++;
 				continue;
 			}
+			else if (*src == 'n') {
+				*str_list_dst++ = '\n';
+				src++;
+				continue;
+			}
 
 			if (capture_id > 0) {
 				capture_id--;
@@ -619,6 +661,24 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 	}
 
 	fflush(stdout);
+
+	if (flags & HAS_PRINT_FLAG) {
+		args_dst = args;
+		while (*args_dst != NULL) {
+			if (args_dst != args)
+				fprintf(stdout, " ");
+
+			fprintf(stdout, "%s", *args_dst);
+			args_dst++;
+		}
+
+		if (!(flags & HAS_NO_NEWLINE_FLAG))
+			fprintf(stdout, "\n");
+
+		free(args);
+		return 1;
+	}
+
 	pid = fork();
 
 	if (pid == 0) {
