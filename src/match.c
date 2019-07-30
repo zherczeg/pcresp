@@ -154,12 +154,12 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 
 			src++;
 
-			if (src[-1] != '%') {
+			if (src[-1] != '#') {
 				continue;
 			}
 
 			if (src >= src_end) {
-				*msg = "a character must be present after % sign";
+				*msg = "a character must be present after # (hash mark)";
 				return src;
 			}
 
@@ -239,8 +239,8 @@ static const char *do_check_script(const char *script, size_t script_size, char 
 					}
 				} while (*src != ']');
 			}
-			else if (*src != '%' && *src != '<' && *src != '>' && *src != 'M' && *src != 'n') {
-				*msg = "invalid % sign sequence";
+			else if (*src != '#' && *src != '<' && *src != '>' && *src != 'M' && *src != 'n') {
+				*msg = "invalid # (hash mark) sequence";
 				return src;
 			}
 
@@ -403,11 +403,12 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			}
 			continue;
 		}
-		else if (*src == '%')
+		else if (*src == '#')
 		{
 			src++;
 			capture_id = 0;
 			string_name = NULL;
+			string_name_len = 0;
 
 			if (*src >= '0' && *src <= '9') {
 				do {
@@ -538,10 +539,12 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			}
 			continue;
 		}
-		else if (*src == '%')
+		else if (*src == '#')
 		{
 			src++;
 			capture_id = 0;
+			string_name = NULL;
+			string_name_len = 0;
 
 			if (*src >= '0' && *src <= '9') {
 				do {
@@ -606,12 +609,11 @@ int run_script(const char *script, size_t script_size, const char *buffer, PCRE2
 			}
 
 			if (capture_id > 0) {
-				capture_id--;
-				length = get_capture_len(capture_id, ovector, script);
+				length = get_capture_len(capture_id - 1, ovector, script);
 
 				if (length != PCRE2_UNSET) {
 					if (length > 0) {
-						memcpy(str_list_dst, buffer + ovector[capture_id * 2], length);
+						memcpy(str_list_dst, buffer + ovector[(capture_id - 1) * 2], length);
 						str_list_dst += length;
 					}
 					continue;

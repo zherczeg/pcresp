@@ -13,19 +13,19 @@ Some examples:
      The unmatched characters are printed because of -p.
      Result: AD
 
-  echo ABCD | pcresp -p '[BC]+' -s '/bin/echo -n {%0}'
+  echo ABCD | pcresp -p '[BC]+' -s '/bin/echo -n {#0}'
      The echo program prints its arguments.
      There is no newline because of the -n parameter.
      Result: A{BC}D
 
-  echo A7 BB29 | pcresp/bin/pcresp '([A-Z]+)(\d+)' -s "*print -%1- :%2:"
+  echo A7 BB29 | pcresp '([A-Z]+)(\d+)' -s "*print -#1- :#2:"
      The script arguments can be printed by the *print flag.
      This is considerably faster than using the echo program.
      Result:
        -A- :7:
        -BB- :29:
 
-  echo 29 30 31 32 33 | pcresp '(\d+)(*SKIP)(?C# *null /usr/bin/expr %1 %% 3 = 0 #)'
+  echo 29 30 31 32 33 | pcresp '(\d+)(*SKIP)(?C^ *null /usr/bin/expr #1 % 3 = 0 ^)'
      This command prints those decimal numbers whose are divisible by 3.
      This condition is checked by 'expr number % 3 = 0'.
      The return value of expr influence the matching: zero - continue, non-zero fail.
@@ -35,9 +35,9 @@ Some examples:
     INC=`expr $2 + 1`
     echo $1 : $INC
   '
-  echo A7 BB29 | pcresp -d prog "$SRC" -s "/bin/bash -c %[prog] arg0 %1 %2" '([A-Z]+)(\d+)'
+  echo A7 BB29 | pcresp -d prog "$SRC" -s "/bin/bash -c #[prog] arg0 #1 #2" '([A-Z]+)(\d+)'
     This example shows an easy way to embed strings (usually source codes).
-    The source referenced %[0] is not processed by pcresp.
+    The source referenced #[0] is not processed by pcresp.
     Result:
       A : 8
       BB : 30
@@ -47,7 +47,7 @@ Some examples:
     echo $1 : $INC
   '
   echo A7 BB29 | pcresp --def-string prog "$SRC" --shell "/bin/bash -c ? arg0" \
-      -s "%[prog] %1 %2" '([A-Z]+)(\d+)'
+      -s "#[prog] #1 #2" '([A-Z]+)(\d+)'
     Same as above
 
   export PCRESP_SHELL="/bin/bash -c ? arg0"
@@ -55,7 +55,7 @@ Some examples:
     INC=`expr $2 + 1`
     echo $1 : $INC
   '
-  echo A7 BB29 | pcresp -d prog "$SRC" -s "%[prog] %1 %2" '([A-Z]+)(\d+)'
+  echo A7 BB29 | pcresp -d prog "$SRC" -s "#[prog] #1 #2" '([A-Z]+)(\d+)'
     Same as above
 
 Usage pcresp [options] pcre_pattern [file list]
@@ -67,7 +67,7 @@ Usage pcresp [options] pcre_pattern [file list]
   -p, --print
           Prints characters between matched strings
   -d, --def-string name string
-          Define a constant string (see %[name])
+          Define a constant string (see #[name])
   --shell default-shell
           Specify the default shell for each script
   [--pattern] pcre2_pattern
@@ -115,20 +115,20 @@ Script format:
   A list of arguments separated by white space(s)
   The first argument must be an executable file
 
-Recognized % (percent sign) sequences:
+Recognized # (hash mark) sequences:
 
   Sequences marked by [*] are not accepted by --shell
 
-  %idx        - string value of capture block idx (0-65535) [*]
-  %{idx}      - string value of capture block idx (0-65535) [*]
-  %[name]     - insert constant string by name [*]
-  %{idx,name} - same as %{idx} if capture block is not empty
-                same as %[name] otherwise [*]
-  %M          - current MARK value [*]
-  %%          - % (percent) sign
-  %<          - less-than sign character
-  %>          - greater-than sign character
-  %n          - newline (\n) character
+  #idx         - string value of capture block idx (0-65535) [*]
+  #{idx}       - string value of capture block idx (0-65535) [*]
+  #[name]      - insert constant string by name [*]
+  #{idx,name}  - same as #{idx} if capture block is not empty
+                 same as #[name] otherwise [*]
+  #M           - current MARK value [*]
+  ##           - # (hash mark)
+  #<           - less-than sign character
+  #>           - greater-than sign character
+  #n           - newline (\n) character
 
 Script arguments can be preceeded by control flags:
 
@@ -141,10 +141,10 @@ Arguments enclosed in <> brackets:
 
   Arguments can be enclosed in <> brackets. These enclosed
   arguments are never recognised as special arguments such
-  as control flags but % sequences are still recognized.
+  as control flags but # sequences are still recognized.
 
   Examples: <argument with spaces> <!null> <?>
-            a '/bin/echo <%%>' script prints a % sign
+            a '/bin/echo <##>' script prints a # sign
 
 Setting the default shell:
 

@@ -1,0 +1,13 @@
+echo A | pcresp '(.)' -s '*print    AB    CD   <AB  CD>    < AB >     CD'
+AB CD AB  CD  AB  CD
+
+A | pcresp '(*:MarK)(.)' -s '*print #1 #{1} #< #> ## #M'
+A A < > # MarK
+
+A | pcresp -d key value -d other_key other_value '(.|(.))' -s '*print #[key] #{1,key} #[other_key] #{2,key} [#[unknown_key]]'
+value A other_value value []
+
+A | pcresp '.' -s '*print #[key] #a'
+Cannot compile: *print #[key] #<< SYNTAX ERROR HERE >>a
+    Error at offset 15 : invalid # (hash mark) sequence
+

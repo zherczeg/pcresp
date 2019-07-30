@@ -92,10 +92,10 @@ static const char *do_parse_shell(const char *shell_arg, char **msg)
 				break;
 			}
 
-			if (*src == '%') {
+			if (*src == '#') {
 				src++;
-				if (*src != '%' && *src != '<' && *src != '>') {
-					*msg = "invalid % sign sequence";
+				if (*src != '#' && *src != '<' && *src != '>') {
+					*msg = "invalid # (hash mark) sequence";
 					return src;
 				}
 			}
@@ -154,7 +154,7 @@ static const char *do_parse_shell(const char *shell_arg, char **msg)
 				break;
 			}
 
-			if (*src == '%') {
+			if (*src == '#') {
 				src++;
 			}
 			*dst++ = *src++;

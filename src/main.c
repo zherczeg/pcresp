@@ -61,7 +61,7 @@ static void help(const char *name)
 		"  -p, --print\n"
 		"          Prints characters between matched strings\n"
 		"  -d, --def-string name string\n"
-		"          Define a constant string (see %%[name])\n"
+		"          Define a constant string (see #[name])\n"
 		"  --shell default-shell\n"
 		"          Specify the default shell for each script\n"
 		"  [--pattern] pcre2_pattern\n"
@@ -102,18 +102,18 @@ static void help(const char *name)
 		"\nScript format:\n"
 		"\n  A list of arguments separated by white space(s)\n"
 		"  The first argument must be an executable file\n"
-		"\nRecognized %% (percent sign) sequences:\n"
+		"\nRecognized # (hash mark) sequences:\n"
 		"\n  Sequences marked by [*] are not accepted by --shell\n\n"
-		"  %%idx        - string value of capture block idx (0-65535) [*]\n"
-		"  %%{idx}      - string value of capture block idx (0-65535) [*]\n"
-		"  %%[name]     - insert constant string by name [*]\n"
-		"  %%{idx,name} - same as %%{idx} if capture block is not empty\n"
-		"                same as %%[name] otherwise [*]\n"
-		"  %%M          - current MARK value [*]\n"
-		"  %%%%          - %% (percent) sign\n"
-		"  %%<          - less-than sign character\n"
-		"  %%>          - greater-than sign character\n"
-		"  %%n          - newline (\\n) character\n"
+		"  #idx         - string value of capture block idx (0-65535) [*]\n"
+		"  #{idx}       - string value of capture block idx (0-65535) [*]\n"
+		"  #[name]      - insert constant string by name [*]\n"
+		"  #{idx,name}  - same as #{idx} if capture block is not empty\n"
+		"                 same as #[name] otherwise [*]\n"
+		"  #M           - current MARK value [*]\n"
+		"  ##           - # (hash mark)\n"
+		"  #<           - less-than sign character\n"
+		"  #>           - greater-than sign character\n"
+		"  #n           - newline (\\n) character\n"
 		"\nScript arguments can be preceeded by control flags:\n\n"
 		"  *print    - print arguments\n"
 		"  *!nl      - no newline after arguments are printed\n"
@@ -122,9 +122,9 @@ static void help(const char *name)
 		"\nArguments enclosed in <> brackets:\n"
 		"\n  Arguments can be enclosed in <> brackets. These enclosed\n"
 		"  arguments are never recognised as special arguments such\n"
-		"  as control flags but %% sequences are still recognized.\n"
+		"  as control flags but # sequences are still recognized.\n"
 		"\n  Examples: <argument with spaces> <!null> <?>\n"
-		"            a '/bin/echo <%%%%>' script prints a %% sign\n"
+		"            a '/bin/echo <##>' script prints a # sign\n"
 		"\nSetting the default shell:\n"
 		"\n  The default shell can be set by the --shell option or by the\n"
 		"  PCRESP_SHELL environment variable.\n"
@@ -322,7 +322,7 @@ static int pcresp_main(int argc, char* argv[])
 				continue;
 			}
 			else if (strcmp(arg, "utf") == 0) {
-				options |= PCRE2_UTF;
+				options |= PCRE2_UTF | PCRE2_UCP;
 				continue;
 			}
 			else if (strcmp(arg, "dot-all") == 0) {
@@ -418,7 +418,7 @@ static int pcresp_main(int argc, char* argv[])
 				options |= PCRE2_EXTENDED;
 				continue;
 			case 'u':
-				options |= PCRE2_UTF;
+				options |= PCRE2_UTF | PCRE2_UCP;
 				continue;
 			}
 		}
